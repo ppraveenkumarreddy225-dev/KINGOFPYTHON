@@ -1,0 +1,175 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="theme-color" content="#101522">
+<link rel="manifest" href="./manifest.webmanifest">
+<title>CodePilot — Python Runner</title>
+<style>
+:root{color-scheme:dark;--bg:#0b1020;--panel:#141d30;--line:#2b3b58;--text:#eef3ff;--muted:#a8b6d0;--blue:#7897ff;--green:#5bd6a1;--red:#ff8585}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:15px system-ui,Arial}
+header{padding:16px;display:flex;justify-content:space-between;align-items:center;gap:12px;border-bottom:1px solid var(--line);position:sticky;top:0;background:#0b1020;z-index:2}
+h1{font-size:19px;margin:0}header p{margin:2px 0 0;color:var(--muted);font-size:12px}
+main{max-width:900px;margin:auto;padding:16px}.panel{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:14px;margin-bottom:14px}
+.status{font-size:12px;padding:7px 10px;border:1px solid var(--line);border-radius:20px;color:#ffd477}
+label{display:block;color:var(--muted);font-size:13px;margin:10px 0 6px}
+textarea{width:100%;background:#080e1a;color:#e9f0ff;border:1px solid #344663;border-radius:10px;padding:12px;font:14px/1.6 ui-monospace,Consolas,monospace;resize:vertical}
+#code{min-height:270px}#stdin{min-height:85px}
+button{border:1px solid #465b7e;background:#243451;color:white;border-radius:9px;padding:10px 13px;font-weight:650}
+button.primary{background:#647ff0;border-color:#647ff0;color:white}button:disabled{opacity:.45}
+.actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
+#output{min-height:120px;max-height:360px;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;background:#080e1a;border:1px solid #344663;border-radius:10px;padding:12px;font:13px/1.6 ui-monospace,Consolas,monospace}
+.good{color:var(--green)}.bad{color:var(--red)}.muted{color:var(--muted);font-size:13px;line-height:1.5}
+@media(max-width:600px){header{align-items:flex-start;flex-direction:column}main{padding:10px}.panel{padding:11px}#code{min-height:240px}}
+</style>
+</head>
+<body>
+<header>
+  <div><h1>CodePilot <span style="color:#9db5ff">Python Runner</span></h1><p>Write Python • Add input • Run • See output</p></div>
+  <div id="status" class="status">Starting Python…</div>
+</header>
+<main>
+  <section class="panel">
+    <strong>Python editor</strong>
+    <label for="code">Your Python code</label>
+    <textarea id="code" spellcheck="false">name = input("Enter your name: ")
+age = int(input("Enter your age: "))
+print("Hello", name)
+print("Next year you will be", age + 1)</textarea>
+    <label for="stdin">Program input (one answer per line)</label>
+    <textarea id="stdin" placeholder="Example:
+Praveen
+17">Praveen
+17</textarea>
+    <div class="actions">
+      <button id="run" class="primary" disabled>▶ Run Python</button>
+      <button id="clear">Clear output</button>
+      <button id="example">Load example</button>
+      <button id="save">Download .py</button>
+    </div>
+  </section>
+  <section class="panel">
+    <strong>Output</strong>
+    <p class="muted">Printed results and Python errors appear here.</p>
+    <pre id="output">Preparing the Python engine. Please wait…</pre>
+  </section>
+  <section class="panel">
+    <strong>Important setup</strong>
+    <p class="muted">This app runs real Python using Pyodide. The first opening needs internet to download the Python engine. Open it once online and wait for “Python ready”. After the browser has cached the engine, the app can run core Python offline. It must be hosted on HTTPS (such as Netlify); opening the HTML file directly will not support offline caching.</p>
+  </section>
+</main>
+<script>
+"use strict";
+const $ = id => document.getElementById(id);
+let pyodide = null;
+let busy = false;
+
+function setStatus(message, type="wait") {
+  $("status").textContent = message;
+  $("status").style.color = type === "ok" ? "#5bd6a1" : type === "error" ? "#ff8585" : "#ffd477";
+}
+function showOutput(message, type="") {
+  $("output").textContent = message;
+  $("output").className = type;
+}
+async function loadScript(url) {
+  return new Promise((resolve, reject) => {
+    const script = document.createElement("script");
+    script.src = url;
+    script.async = true;
+    script.onload = resolve;
+    script.onerror = () => reject(new Error("Could not download the Python engine from " + url));
+    document.head.appendChild(script);
+  });
+}
+async function startPython() {
+  setStatus("Loading Python engine…");
+  showOutput("Downloading the real Python engine. Keep this page open…");
+  try {
+    if (!window.loadPyodide) {
+      try {
+        await loadScript("https://cdn.jsdelivr.net/pyodide/v0.27.7/full/pyodide.js");
+      } catch (firstError) {
+        await loadScript("https://unpkg.com/pyodide@0.27.7/pyodide.js");
+      }
+    }
+    pyodide = await window.loadPyodide({
+      indexURL: "https://cdn.jsdelivr.net/pyodide/v0.27.7/full/"
+    });
+    $("run").disabled = false;
+    setStatus("Python ready", "ok");
+    showOutput("Python is ready. Type code, add input values, and press Run Python.", "good");
+  } catch (error) {
+    setStatus("Python did not load", "error");
+    showOutput("The Python engine could not start.\n\n" + (error && error.message ? error.message : String(error)) +
+      "\n\nFix: connect to a stable internet connection, reopen the hosted HTTPS app, and wait for “Python ready”. Do not test by opening the HTML file from Downloads.", "bad");
+  }
+}
+async function runPython() {
+  if (!pyodide || busy) return;
+  busy = true;
+  $("run").disabled = true;
+  showOutput("Running…");
+  try {
+    // Pass code and stdin safely as Python globals; input() reads one line at a time.
+    pyodide.globals.set("cp_user_code", $("code").value);
+    pyodide.globals.set("cp_user_input", $("stdin").value);
+    const result = await pyodide.runPythonAsync(`
+import io, sys, contextlib, traceback, json
+_cp_output = io.StringIO()
+_cp_previous_stdin = sys.stdin
+_cp_result = {"success": False, "output": "", "error": ""}
+try:
+    sys.stdin = io.StringIO(cp_user_input)
+    with contextlib.redirect_stdout(_cp_output):
+        exec(compile(cp_user_code, "main.py", "exec"), {"__name__": "__main__"})
+    _cp_result["success"] = True
+except BaseException as exc:
+    _cp_result["error"] = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
+finally:
+    sys.stdin = _cp_previous_stdin
+    _cp_result["output"] = _cp_output.getvalue()
+json.dumps(_cp_result)
+`);
+    const data = JSON.parse(result);
+    let text = data.output || "";
+    if (data.error) text += (text ? "\n" : "") + "Python error:\n" + data.error;
+    if (!text) text = data.success ? "Program finished successfully (no printed output)." : "Program stopped.";
+    showOutput(text, data.success ? "good" : "bad");
+  } catch (error) {
+    showOutput("Runner error:\n" + (error && error.message ? error.message : String(error)), "bad");
+  } finally {
+    busy = false;
+    $("run").disabled = !pyodide;
+  }
+}
+$("run").addEventListener("click", runPython);
+$("clear").addEventListener("click", () => showOutput("Output cleared."));
+$("example").addEventListener("click", () => {
+  $("code").value = 'name = input("Enter your name: ")\\nage = int(input("Enter your age: "))\\nprint("Hello", name)\\nprint("Next year you will be", age + 1)';
+  $("stdin").value = "Praveen\\n17";
+});
+$("save").addEventListener("click", () => {
+  const blob = new Blob([$("code").value], {type:"text/x-python"});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url; a.download = "main.py"; a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+});
+$("code").addEventListener("keydown", event => {
+  if (event.key === "Tab") {
+    event.preventDefault();
+    const el = event.currentTarget;
+    el.setRangeText("    ", el.selectionStart, el.selectionEnd, "end");
+  }
+});
+if ("serviceWorker" in navigator && location.protocol.startsWith("http")) {
+  window.addEventListener("load", () => navigator.serviceWorker.register("./sw.js").catch(err => {
+    console.warn("Offline cache registration failed:", err);
+  }));
+}
+startPython();
+</script>
+</body>
+</html>
